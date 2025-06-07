@@ -1,4 +1,3 @@
-from pymongo import ObjectId
 from bson import ObjectId
 import numpy as np
 from lightfm import LightFM
