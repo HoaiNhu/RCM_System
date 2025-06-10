@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from .recommender import recommend, train_or_update_model, evaluate_model, precompute_recommendations
+from .recommender import recommend, train_or_update_model, evaluate_model, precompute_recommendations, recommend_from_quiz
 from .utils import connect_to_mongo, connect_to_redis
-from .models import RecommendationRequest, PopularRequest
+from .models import RecommendationRequest, PopularRequest, QuizRecommendationRequest
 from datetime import datetime
 import os
 from dotenv import load_dotenv
@@ -52,6 +52,13 @@ async def get_popular_products(request: PopularRequest):
     recommendations = [str(p['_id']) for p in popular_products]
     if not recommendations:
         raise HTTPException(status_code=404, detail="No popular products found")
+    return {"recommendations": recommendations}
+
+@app.post("/recommend/quiz")
+async def get_quiz_recommendations(request: QuizRecommendationRequest):
+    recommendations = recommend_from_quiz(request.user_id, request.session_id, db, redis_client)
+    if not recommendations:
+        raise HTTPException(status_code=404, detail="No recommendations found based on quiz responses")
     return {"recommendations": recommendations}
 
 @app.get("/evaluate-model")

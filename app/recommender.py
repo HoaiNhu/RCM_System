@@ -176,6 +176,96 @@ def recommend(user_id, current_product_id, db, model, dataset, redis_client, n_i
         redis_client.setex(cache_key, 3600, json.dumps(recommendations))
     return recommendations[:n_items]
 
+def recommend_from_quiz(user_id, session_id, db, redis_client, n_items=20):
+    cache_key = f"quiz_rec:{user_id}:{session_id}"
+    
+    if redis_client:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    
+    # Fetch quiz responses for the user and session
+    responses = list(db.quiz_responses.find({'userId': user_id, 'sessionId': session_id, 'completed': True}))
+    if not responses:
+        popular_products = list(db.products.find()
+                                .sort([('averageRating', -1), ('totalRatings', -1)])
+                                .limit(n_items))
+        recommendations = [str(p['_id']) for p in popular_products]
+        if redis_client:
+            redis_client.setex(cache_key, 3600, json.dumps(recommendations))
+        return recommendations
+    
+    # Mapping of quiz answers to product attributes
+    mood_to_keywords = {
+        'happy': ['vui', 'sáng', 'ngọt', 'tươi', 'màu sắc'],
+        'sad': ['êm dịu', 'trầm', 'chocolate', 'dịu ngọt', 'ấm áp'],
+        'stressed': ['nhẹ nhàng', 'thư giãn', 'trà', 'tinh tế', 'bình yên'],
+        'custom': []
+    }
+    memory_to_keywords = {
+        'milk': ['sữa', 'kem', 'dịu', 'trẻ thơ', 'mềm mại'],
+        'vanilla': ['vani', 'ngọt nhẹ', 'tinh tế', 'cổ điển', 'thơm'],
+        'chocolate': ['chocolate', 'đậm đà', 'ngọt đắng', 'giàu', 'ấm'],
+        'custom': []
+    }
+    
+    # Collect keywords based on quiz responses
+    keywords = []
+    for response in responses:
+        quiz = db.quizzes.find_one({'_id': ObjectId(response['quizId'])})
+        if not quiz:
+            continue
+        answer = response['answer']
+        custom_answer = response.get('customAnswer')
+        if quiz['type'] == 'mood':
+            keywords.extend(mood_to_keywords.get(answer, []))
+            if answer == 'custom' and custom_answer:
+                keywords.append(custom_answer.lower())
+        elif quiz['type'] == 'memory':
+            keywords.extend(memory_to_keywords.get(answer, []))
+            if answer == 'custom' and custom_answer:
+                keywords.append(custom_answer.lower())
+    
+    # Remove duplicates and empty keywords
+    keywords = [k for k in set(keywords) if k]
+    if not keywords:
+        popular_products = list(db.products.find()
+                                .sort([('averageRating', -1), ('totalRatings', -1)])
+                                .limit(n_items))
+        recommendations = [str(p['_id']) for p in popular_products]
+        if redis_client:
+            redis_client.setex(cache_key, 3600, json.dumps(recommendations))
+        return recommendations
+    
+    # Search products matching keywords in name or description
+    query = {
+        '$or': [
+            {'name': {'$regex': k, '$options': 'i'}} for k in keywords
+        ] + [
+            {'description': {'$regex': k, '$options': 'i'}} for k in keywords
+        ]
+    }
+    products = list(db.products.find(query)
+                    .sort([('averageRating', -1), ('totalRatings', -1), ('price', 1)])
+                    .limit(n_items))
+    
+    recommendations = []
+    for product in products:
+        avg_rating = product.get('averageRating', 0)
+        if avg_rating >= 2.0:  # Filter low-rated products
+            recommendations.append(str(product['_id']))
+    
+    # Fallback to popular products if insufficient matches
+    if len(recommendations) < n_items:
+        popular_products = list(db.products.find()
+                                .sort([('averageRating', -1), ('totalRatings', -1)])
+                                .limit(n_items - len(recommendations)))
+        recommendations.extend([str(p['_id']) for p in popular_products if str(p['_id']) not in recommendations])
+    
+    if redis_client:
+        redis_client.setex(cache_key, 3600, json.dumps(recommendations))
+    return recommendations[:n_items]
+
 def precompute_recommendations(db, model, dataset):
     user_ids = dataset.mapping()[0]
     for user_id in user_ids:

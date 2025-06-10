@@ -7,3 +7,7 @@ class RecommendationRequest(BaseModel):
 
 class PopularRequest(BaseModel):
     category: Optional[str] = None
+
+class QuizRecommendationRequest(BaseModel):
+    user_id: str
+    session_id: str
