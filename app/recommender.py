@@ -9,74 +9,111 @@ import json
 from .utils import analyze_comment
 
 def prepare_data(db, new_orders_only=False, last_timestamp=None):
-    dataset = Dataset()
-    query = {'createdAt': {'$gt': last_timestamp}} if new_orders_only and last_timestamp else {}
-    
-    users_from_orders = set(str(order['userId']) for order in db.orders.find(query) if order.get('userId'))
-    users_from_ratings = set(str(rating['userId']) for rating in db.ratings.find(query) if rating.get('userId'))
-    users = users_from_orders | users_from_ratings
-    
-    products_from_orders = set(str(item['product']) for order in db.orders.find(query) for item in order.get('orderItems', []))
-    products_from_ratings = set(str(rating['productId']) for rating in db.ratings.find(query) if rating.get('productId'))
-    products = products_from_orders | products_from_ratings
-    
-    if new_orders_only:
-        dataset.fit_partial(users=users, items=products)
-    else:
-        dataset.fit(users=users, items=products)
-    
-    interactions = []
-    for order in db.orders.find(query):
-        if order.get('userId'):
-            user_id = str(order['userId'])
-            for item in order.get('orderItems', []):
-                product_id = str(item['product'])
-                quantity = item.get('quantity', 1)
-                interactions.append((user_id, product_id, quantity))
-    
-    for rating in db.ratings.find(query):
-        if rating.get('userId') and rating.get('productId'):
-            user_id = str(rating['userId'])
-            product_id = str(rating['productId'])
-            rating_value = rating.get('rating', 0)
-            comment = rating.get('comment', '')
-            comment_score = analyze_comment(comment)
-            product = db.products.find_one({'_id': ObjectId(product_id)})
-            avg_rating_bonus = product.get('averageRating', 0) * 0.3 if product else 0
-            weight = rating_value * 0.5 + comment_score * 0.2 + avg_rating_bonus
-            interactions.append((user_id, product_id, max(weight, 0)))
-    
-    (interactions_matrix, weights) = dataset.build_interactions(interactions)
-    return dataset, interactions_matrix
+    try:
+        print("Bắt đầu prepare_data...")
+        dataset = Dataset()
+        query = {'createdAt': {'$gt': last_timestamp}} if new_orders_only and last_timestamp else {}
+        print(f"Query filter: {query}")
+        
+        # Lấy users từ orders và ratings
+        users_from_orders = set(str(order['userId']) for order in db.orders.find(query) if order.get('userId'))
+        users_from_ratings = set(str(rating['userId']) for rating in db.ratings.find(query) if rating.get('userId'))
+        users = users_from_orders | users_from_ratings
+        print(f"Số lượng users: {len(users)}")
+        
+        # Lấy products từ orders và ratings
+        products_from_orders = set(str(item['product']) for order in db.orders.find(query) for item in order.get('orderItems', []))
+        products_from_ratings = set(str(rating['productId']) for rating in db.ratings.find(query) if rating.get('productId'))
+        products = products_from_orders | products_from_ratings
+        print(f"Số lượng products: {len(products)}")
+        
+        if new_orders_only:
+            print("Fitting partial dataset...")
+            dataset.fit_partial(users=users, items=products)
+        else:
+            print("Fitting full dataset...")
+            dataset.fit(users=users, items=products)
+        
+        # Tạo interactions từ orders
+        interactions = []
+        print("Đang xử lý orders...")
+        for order in db.orders.find(query):
+            if order.get('userId'):
+                user_id = str(order['userId'])
+                for item in order.get('orderItems', []):
+                    product_id = str(item['product'])
+                    quantity = item.get('quantity', 1)
+                    interactions.append((user_id, product_id, quantity))
+        
+        print("Đang xử lý ratings...")
+        for rating in db.ratings.find(query):
+            if rating.get('userId') and rating.get('productId'):
+                user_id = str(rating['userId'])
+                product_id = str(rating['productId'])
+                rating_value = rating.get('rating', 0)
+                comment = rating.get('comment', '')
+                comment_score = analyze_comment(comment)
+                product = db.products.find_one({'_id': ObjectId(product_id)})
+                avg_rating_bonus = product.get('averageRating', 0) * 0.3 if product else 0
+                weight = rating_value * 0.5 + comment_score * 0.2 + avg_rating_bonus
+                interactions.append((user_id, product_id, max(weight, 0)))
+        
+        print(f"Tổng số interactions: {len(interactions)}")
+        (interactions_matrix, weights) = dataset.build_interactions(interactions)
+        print("prepare_data hoàn thành")
+        return dataset, interactions_matrix
+    except Exception as e:
+        print(f"Lỗi trong prepare_data: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise e
 
 def train_or_update_model(db, model_path='model.pkl', dataset_path='dataset.pkl', last_timestamp=None):
-    if os.path.exists(model_path) and os.path.exists(dataset_path):
-        with open(model_path, 'rb') as f:
-            model = pickle.load(f)
-        with open(dataset_path, 'rb') as f:
-            dataset = pickle.load(f)
-        dataset, interactions_matrix = prepare_data(db, new_orders_only=True, last_timestamp=last_timestamp)
-        model.fit_partial(interactions_matrix, epochs=20, num_threads=2, verbose=True)
-    else:
-        dataset, interactions_matrix = prepare_data(db)
-        model = LightFM(
-            loss='warp',
-            random_state=42,
-            learning_rate=0.1,  # Tăng learning rate
-            no_components=20    # Giảm số components
+    try:
+        print("Bắt đầu train_or_update_model...")
+        
+        if os.path.exists(model_path) and os.path.exists(dataset_path):
+            print("Loading existing model and dataset...")
+            with open(model_path, 'rb') as f:
+                model = pickle.load(f)
+            with open(dataset_path, 'rb') as f:
+                dataset = pickle.load(f)
+            print("Preparing data for partial update...")
+            dataset, interactions_matrix = prepare_data(db, new_orders_only=True, last_timestamp=last_timestamp)
+            print("Fitting partial model...")
+            model.fit_partial(interactions_matrix, epochs=20, num_threads=2, verbose=True)
+        else:
+            print("Creating new model and dataset...")
+            dataset, interactions_matrix = prepare_data(db)
+            model = LightFM(
+                loss='warp',
+                random_state=42,
+                learning_rate=0.1,  # Tăng learning rate
+                no_components=20    # Giảm số components
+            )
+            print("Fitting new model...")
+            model.fit(interactions_matrix, epochs=50, num_threads=2, verbose=True)
+        
+        print("Saving model and dataset...")
+        with open(model_path, 'wb') as f:
+            pickle.dump(model, f)
+        with open(dataset_path, 'wb') as f:
+            pickle.dump(dataset, f)
+        
+        print("Updating model metadata...")
+        db.model_metadata.update_one(
+            {'type': 'last_update'},
+            {'$set': {'timestamp': datetime.utcnow()}},
+            upsert=True
         )
-        model.fit(interactions_matrix, epochs=50, num_threads=2, verbose=True)
-    
-    with open(model_path, 'wb') as f:
-        pickle.dump(model, f)
-    with open(dataset_path, 'wb') as f:
-        pickle.dump(dataset, f)
-    db.model_metadata.update_one(
-        {'type': 'last_update'},
-        {'$set': {'timestamp': datetime.utcnow()}},
-        upsert=True
-    )
-    return model, dataset
+        
+        print("train_or_update_model hoàn thành")
+        return model, dataset
+    except Exception as e:
+        print(f"Lỗi trong train_or_update_model: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise e
 
 def evaluate_model(db, model, dataset, k=5):
     user_ids, item_ids = dataset.mapping()[0], dataset.mapping()[2]

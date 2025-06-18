@@ -72,12 +72,35 @@ async def get_model_evaluation():
 
 @app.post("/update-model")
 async def update_model():
-    last_update = db.model_metadata.find_one({'type': 'last_update'})
-    last_timestamp = last_update['timestamp'] if last_update else None
-    global model, dataset
-    model, dataset = train_or_update_model(db, last_timestamp=last_timestamp)
-    precompute_recommendations(db, model, dataset)
-    return {"status": "Model updated successfully"}
+    try:
+        print("Bắt đầu cập nhật mô hình...")
+        
+        # Kiểm tra kết nối database
+        if not db:
+            raise HTTPException(status_code=500, detail="Không thể kết nối database")
+        
+        # Lấy thông tin cập nhật cuối
+        last_update = db.model_metadata.find_one({'type': 'last_update'})
+        last_timestamp = last_update['timestamp'] if last_update else None
+        print(f"Timestamp cập nhật cuối: {last_timestamp}")
+        
+        # Cập nhật mô hình
+        global model, dataset
+        print("Đang training/updating model...")
+        model, dataset = train_or_update_model(db, last_timestamp=last_timestamp)
+        print("Model training hoàn thành")
+        
+        # Precompute recommendations
+        print("Đang precompute recommendations...")
+        precompute_recommendations(db, model, dataset)
+        print("Precompute hoàn thành")
+        
+        return {"status": "Model updated successfully"}
+    except Exception as e:
+        print(f"Lỗi khi cập nhật mô hình: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Lỗi khi cập nhật mô hình: {str(e)}")
 
 @app.post("/interaction/log")
 async def log_interaction(interaction: dict):
