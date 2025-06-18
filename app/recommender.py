@@ -381,19 +381,31 @@ def precompute_recommendations(db, model, dataset):
         user_ids = dataset.mapping()[0]
         print(f"Precomputing recommendations cho {len(user_ids)} users...")
         
-        for user_id in user_ids:
+        # Giới hạn số lượng users để tránh timeout
+        max_users = 50
+        if len(user_ids) > max_users:
+            print(f"Giới hạn precompute cho {max_users} users đầu tiên")
+            user_ids = list(user_ids)[:max_users]
+        
+        success_count = 0
+        for i, user_id in enumerate(user_ids):
             try:
+                if i % 10 == 0:  # Log progress mỗi 10 users
+                    print(f"Đang xử lý user {i+1}/{len(user_ids)}")
+                
                 recommended = recommend(user_id, None, db, model, dataset, None)
-                db.recommendations.update_one(
-                    {'userId': user_id},
-                    {'$set': {'recommended': recommended, 'updatedAt': datetime.utcnow()}},
-                    upsert=True
-                )
+                if recommended:
+                    db.recommendations.update_one(
+                        {'userId': user_id},
+                        {'$set': {'recommended': recommended, 'updatedAt': datetime.utcnow()}},
+                        upsert=True
+                    )
+                    success_count += 1
             except Exception as e:
                 print(f"Lỗi khi precompute cho user {user_id}: {e}")
                 continue
         
-        print("Precompute recommendations hoàn thành")
+        print(f"Precompute recommendations hoàn thành: {success_count}/{len(user_ids)} users thành công")
     except Exception as e:
         print(f"Lỗi trong precompute_recommendations: {str(e)}")
         import traceback

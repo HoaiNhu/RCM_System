@@ -109,10 +109,14 @@ async def update_model():
         model, dataset = train_or_update_model(db, last_timestamp=last_timestamp)
         print("Model training hoàn thành")
         
-        # Precompute recommendations
-        print("Đang precompute recommendations...")
-        precompute_recommendations(db, model, dataset)
-        print("Precompute hoàn thành")
+        # Precompute recommendations (với timeout)
+        try:
+            print("Đang precompute recommendations...")
+            precompute_recommendations(db, model, dataset)
+            print("Precompute hoàn thành")
+        except Exception as precompute_error:
+            print(f"Lỗi khi precompute: {precompute_error}")
+            # Không raise lỗi, chỉ log và tiếp tục
         
         return {"status": "Model updated successfully"}
     except Exception as e:
