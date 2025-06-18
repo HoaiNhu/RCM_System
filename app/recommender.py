@@ -8,7 +8,7 @@ import pickle
 import json
 from .utils import analyze_comment
 
-def prepare_data(db, new_orders_only=False, last_timestamp=None):
+def prepare_data(db, new_orders_only=False, last_timestamp=None, existing_dataset=None):
     try:
         print("Bắt đầu prepare_data...")
         
@@ -18,7 +18,15 @@ def prepare_data(db, new_orders_only=False, last_timestamp=None):
         print(f"Tổng số orders trong database: {total_orders}")
         print(f"Tổng số ratings trong database: {total_ratings}")
         
-        dataset = Dataset()
+        if existing_dataset and new_orders_only:
+            # Sử dụng dataset cũ và chỉ thêm dữ liệu mới
+            dataset = existing_dataset
+            print("Sử dụng dataset cũ và thêm dữ liệu mới...")
+        else:
+            # Tạo dataset mới
+            dataset = Dataset()
+            print("Tạo dataset mới...")
+        
         query = {'createdAt': {'$gt': last_timestamp}} if new_orders_only and last_timestamp else {}
         print(f"Query filter: {query}")
         
@@ -31,10 +39,10 @@ def prepare_data(db, new_orders_only=False, last_timestamp=None):
         # Lấy products từ orders và ratings
         products_from_orders = set(str(item['product']) for order in db.orders.find(query) for item in order.get('orderItems', []))
         products_from_ratings = set(str(rating['productId']) for rating in db.ratings.find(query) if rating.get('productId'))
-        products = products_from_orders | products_from_ratings
+        products = products_from_ratings | products_from_orders
         print(f"Số lượng products: {len(products)}")
         
-        if new_orders_only:
+        if new_orders_only and existing_dataset:
             print("Fitting partial dataset...")
             dataset.fit_partial(users=users, items=products)
         else:
@@ -79,16 +87,70 @@ def train_or_update_model(db, model_path='model.pkl', dataset_path='dataset.pkl'
     try:
         print("Bắt đầu train_or_update_model...")
         
+        # Kiểm tra xem có dữ liệu mới không
+        if last_timestamp:
+            new_data_query = {'createdAt': {'$gt': last_timestamp}}
+            new_orders_count = db.orders.count_documents(new_data_query)
+            new_ratings_count = db.ratings.count_documents(new_data_query)
+            print(f"Dữ liệu mới: {new_orders_count} orders, {new_ratings_count} ratings")
+            
+            # Nếu không có dữ liệu mới, return model cũ
+            if new_orders_count == 0 and new_ratings_count == 0:
+                print("Không có dữ liệu mới, giữ nguyên model")
+                if os.path.exists(model_path) and os.path.exists(dataset_path):
+                    with open(model_path, 'rb') as f:
+                        model = pickle.load(f)
+                    with open(dataset_path, 'rb') as f:
+                        dataset = pickle.load(f)
+                    return model, dataset
+        
         if os.path.exists(model_path) and os.path.exists(dataset_path):
             print("Loading existing model and dataset...")
             with open(model_path, 'rb') as f:
                 model = pickle.load(f)
             with open(dataset_path, 'rb') as f:
                 dataset = pickle.load(f)
-            print("Preparing data for partial update...")
-            dataset, interactions_matrix = prepare_data(db, new_orders_only=True, last_timestamp=last_timestamp)
-            print("Fitting partial model...")
-            model.fit_partial(interactions_matrix, epochs=20, num_threads=2, verbose=True)
+            
+            # Kiểm tra xem có thể fit_partial không
+            try:
+                print("Preparing data for partial update...")
+                new_dataset, interactions_matrix = prepare_data(db, new_orders_only=True, last_timestamp=last_timestamp, existing_dataset=dataset)
+                
+                # Kiểm tra số lượng features
+                old_user_ids, old_item_ids = dataset.mapping()[0], dataset.mapping()[2]
+                new_user_ids, new_item_ids = new_dataset.mapping()[0], new_dataset.mapping()[2]
+                
+                print(f"Old features - Users: {len(old_user_ids)}, Items: {len(old_item_ids)}")
+                print(f"New features - Users: {len(new_user_ids)}, Items: {len(new_item_ids)}")
+                
+                # Nếu số features khác nhau nhiều, retrain toàn bộ
+                if len(new_user_ids) < len(old_user_ids) * 0.5 or len(new_item_ids) < len(old_item_ids) * 0.5:
+                    print("Số features khác nhau nhiều, retrain toàn bộ model...")
+                    dataset, interactions_matrix = prepare_data(db)
+                    model = LightFM(
+                        loss='warp',
+                        random_state=42,
+                        learning_rate=0.1,
+                        no_components=20
+                    )
+                    print("Fitting new model...")
+                    model.fit(interactions_matrix, epochs=50, num_threads=2, verbose=True)
+                else:
+                    print("Fitting partial model...")
+                    model.fit_partial(interactions_matrix, epochs=20, num_threads=2, verbose=True)
+                    
+            except Exception as partial_error:
+                print(f"Lỗi khi fit_partial: {partial_error}")
+                print("Retrain toàn bộ model...")
+                dataset, interactions_matrix = prepare_data(db)
+                model = LightFM(
+                    loss='warp',
+                    random_state=42,
+                    learning_rate=0.1,
+                    no_components=20
+                )
+                print("Fitting new model...")
+                model.fit(interactions_matrix, epochs=50, num_threads=2, verbose=True)
         else:
             print("Creating new model and dataset...")
             dataset, interactions_matrix = prepare_data(db)
