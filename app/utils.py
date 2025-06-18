@@ -16,11 +16,12 @@ def analyze_comment(comment):
 
 def connect_to_mongo():
     MONGODB_URI = f"mongodb+srv://{os.getenv('MONGODB_USERNAME')}:{os.getenv('MONGODB_PASSWORD')}@webbuycake.asd8v.mongodb.net/?retryWrites=true&w=majority&appName=WebBuyCake"
+    DB_NAME = os.getenv('MONGODB_DATABASE', 'test')  # Sử dụng database name từ env, mặc định là 'test'
     try:
         client = pymongo.MongoClient(MONGODB_URI)
-        db = client['test']
+        db = client[DB_NAME]
         db.command("ping")
-        print("Kết nối MongoDB thành công!")
+        print(f"Kết nối MongoDB thành công! Database: {DB_NAME}")
         return db
     except Exception as e:
         print(f"Lỗi kết nối MongoDB: {e}")
@@ -38,6 +39,6 @@ def connect_to_redis():
         redis_client.ping()
         print("Kết nối Upstash Redis thành công!")
         return redis_client
-    except redis.ConnectionError as e:
+    except Exception as e:
         print(f"Không kết nối được Upstash Redis: {e}")
         return None

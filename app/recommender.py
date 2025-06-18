@@ -11,6 +11,13 @@ from .utils import analyze_comment
 def prepare_data(db, new_orders_only=False, last_timestamp=None):
     try:
         print("Bắt đầu prepare_data...")
+        
+        # Kiểm tra số lượng dữ liệu trong database
+        total_orders = db.orders.count_documents({})
+        total_ratings = db.ratings.count_documents({})
+        print(f"Tổng số orders trong database: {total_orders}")
+        print(f"Tổng số ratings trong database: {total_ratings}")
+        
         dataset = Dataset()
         query = {'createdAt': {'$gt': last_timestamp}} if new_orders_only and last_timestamp else {}
         print(f"Query filter: {query}")
@@ -304,11 +311,28 @@ def recommend_from_quiz(user_id, session_id, db, redis_client, n_items=20):
     return recommendations[:n_items]
 
 def precompute_recommendations(db, model, dataset):
-    user_ids = dataset.mapping()[0]
-    for user_id in user_ids:
-        recommended = recommend(user_id, None, db, model, dataset, None)
-        db.recommendations.update_one(
-            {'userId': user_id},
-            {'$set': {'recommended': recommended, 'updatedAt': datetime.utcnow()}},
-            upsert=True
-        )
+    try:
+        if db is None:
+            print("Không thể precompute recommendations do lỗi kết nối database")
+            return
+        
+        user_ids = dataset.mapping()[0]
+        print(f"Precomputing recommendations cho {len(user_ids)} users...")
+        
+        for user_id in user_ids:
+            try:
+                recommended = recommend(user_id, None, db, model, dataset, None)
+                db.recommendations.update_one(
+                    {'userId': user_id},
+                    {'$set': {'recommended': recommended, 'updatedAt': datetime.utcnow()}},
+                    upsert=True
+                )
+            except Exception as e:
+                print(f"Lỗi khi precompute cho user {user_id}: {e}")
+                continue
+        
+        print("Precompute recommendations hoàn thành")
+    except Exception as e:
+        print(f"Lỗi trong precompute_recommendations: {str(e)}")
+        import traceback
+        traceback.print_exc()
