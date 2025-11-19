@@ -1,12 +1,11 @@
-FROM python:3.10
+FROM python:3.9-slim
 
 WORKDIR /app
 
-# Install minimal dependencies for Python 3.9 (has pre-built wheels)
+# Install minimal dependencies (lightfm 1.17 has prebuilt wheels for Python 3.9)
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
-    libopenblas-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
