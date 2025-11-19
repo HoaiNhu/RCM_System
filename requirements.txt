@@ -5,8 +5,7 @@ cython==3.0.11
 setuptools==75.0.0
 wheel==0.44.0
 
-# LightFM and ML libraries
-lightfm==1.17
+# ML libraries
 scikit-learn==1.5.2
 pandas==2.2.2
 
