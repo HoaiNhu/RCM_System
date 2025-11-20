@@ -1,183 +1,131 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from .recommender import recommend, train_or_update_model, evaluate_model, precompute_recommendations, recommend_from_quiz
-from .utils import connect_to_mongo, connect_to_redis
-from .models import RecommendationRequest, PopularRequest, QuizRecommendationRequest
-from datetime import datetime
-import os
-from dotenv import load_dotenv
+"""
+Main FastAPI application
+Refactored with clean architecture following SOLID principles
+"""
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import threading
+import time
 
-load_dotenv()
+from .api import api_router
+from .core.dependencies import get_recommendation_service
 
-app = FastAPI(title="Recommendation System API")
 
-# Kết nối MongoDB và Redis
-db = connect_to_mongo()
-redis_client = connect_to_redis()
+# Application metadata
+APP_TITLE = "RCM System - Hybrid Recommendation Engine"
+APP_VERSION = "2.0.0"
+APP_DESCRIPTION = """
+Hybrid Recommendation System combining:
+- **Collaborative Filtering** (NMF matrix factorization)
+- **Content-Based Filtering** (TF-IDF + cosine similarity)
+- **Search History Integration** for improved accuracy
 
-# Khởi tạo mô hình
-try:
-    if db is not None:
-        model, dataset = train_or_update_model(db)
-        precompute_recommendations(db, model, dataset)
-        print("Khởi tạo mô hình thành công")
-    else:
-        print("Không thể khởi tạo mô hình do lỗi kết nối database")
-        model, dataset = None, None
-except Exception as e:
-    print(f"Lỗi khi khởi tạo mô hình: {e}")
-    model, dataset = None, None
+Built with clean architecture following SOLID principles.
+"""
 
-@app.get("/")
-async def root():
-    return {"message": "Welcome to the Recommendation API!"}
+# Create FastAPI application
+app = FastAPI(
+    title=APP_TITLE,
+    version=APP_VERSION,
+    description=APP_DESCRIPTION,
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
-@app.get("/health")
-async def health_check():
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include API routes
+app.include_router(api_router)
+
+# Global state for model training
+model_loading = False
+
+
+def initialize_model_background():
+    """Initialize model in background thread"""
+    global model_loading
+    
     try:
-        if db is not None:
-            db.command("ping")
-        if redis_client is not None:
-            redis_client.ping()
-        return {"status": "healthy"}
+        model_loading = True
+        import time
+        start_time = time.time()
+        
+        print("\n" + "🚀"*30)
+        print("  STARTING BACKGROUND MODEL INITIALIZATION")
+        print("🚀"*30 + "\n")
+        
+        # Get recommendation service (triggers lazy loading)
+        print("⏳ Initializing services...")
+        service = get_recommendation_service()
+        
+        # Train if not already trained
+        if not service.is_ready():
+            print("\n📚 Model not found, training from scratch...")
+            service.train(force_retrain=False)
+        else:
+            print("\n✅ Model loaded from disk (fast startup)")
+        
+        elapsed = time.time() - start_time
+        print("\n" + "✅"*30)
+        print(f"  INITIALIZATION COMPLETE in {elapsed:.2f}s")
+        print("✅"*30)
+        print("\n" + "="*60)
+        print("🎉 SERVER IS READY TO ACCEPT REQUESTS!")
+        print("📍 API Documentation: http://localhost:8000/docs")
+        print("🔍 Health Check: http://localhost:8000/health")
+        print("="*60 + "\n")
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
-
-@app.post("/recommend")
-async def get_recommendations(request: RecommendationRequest):
-    if model is None or dataset is None:
-        raise HTTPException(status_code=500, detail="Model chưa được khởi tạo")
-    recommendations = recommend(request.user_id, request.product_id, db, model, dataset, redis_client)
-    if not recommendations:
-        raise HTTPException(status_code=404, detail="No recommendations found")
-    return {"recommendations": recommendations}
-
-@app.post("/recommend/popular")
-async def get_popular_products(request: PopularRequest):
-    query = {'productCategory': request.category} if request.category else {}
-    popular_products = list(db.products.find(query)
-                            .sort([('averageRating', -1), ('totalRatings', -1)])
-                            .limit(5))
-    recommendations = [str(p['_id']) for p in popular_products]
-    if not recommendations:
-        raise HTTPException(status_code=404, detail="No popular products found")
-    return {"recommendations": recommendations}
-
-@app.post("/recommend/quiz")
-async def get_quiz_recommendations(request: QuizRecommendationRequest):
-    recommendations = recommend_from_quiz(request.user_id, request.session_id, db, redis_client)
-    if not recommendations:
-        raise HTTPException(status_code=404, detail="No recommendations found based on quiz responses")
-    return {"recommendations": recommendations}
-
-@app.get("/evaluate-model")
-async def get_model_evaluation():
-    if model is None or dataset is None:
-        raise HTTPException(status_code=500, detail="Model chưa được khởi tạo")
-    precision, recall, f1 = evaluate_model(db, model, dataset)
-    return {
-        "precision": precision,
-        "recall": recall,
-        "f1_score": f1
-    }
-
-@app.post("/update-model")
-async def update_model():
-    try:
-        print("Bắt đầu cập nhật mô hình...")
-        
-        # Kiểm tra kết nối database
-        if db is None:
-            raise HTTPException(status_code=500, detail="Không thể kết nối database")
-        
-        # Test kết nối database
-        try:
-            db.command("ping")
-            print("Database connection OK")
-        except Exception as db_error:
-            print(f"Database connection failed: {db_error}")
-            raise HTTPException(status_code=500, detail=f"Lỗi kết nối database: {str(db_error)}")
-        
-        # Lấy thông tin cập nhật cuối
-        last_update = db.model_metadata.find_one({'type': 'last_update'})
-        last_timestamp = last_update['timestamp'] if last_update else None
-        print(f"Timestamp cập nhật cuối: {last_timestamp}")
-        
-        # Cập nhật mô hình
-        global model, dataset
-        print("Đang training/updating model...")
-        model, dataset = train_or_update_model(db, last_timestamp=last_timestamp)
-        print("Model training hoàn thành")
-        
-        # Precompute recommendations (với timeout)
-        try:
-            print("Đang precompute recommendations...")
-            precompute_recommendations(db, model, dataset)
-            print("Precompute hoàn thành")
-        except Exception as precompute_error:
-            print(f"Lỗi khi precompute: {precompute_error}")
-            # Không raise lỗi, chỉ log và tiếp tục
-        
-        return {"status": "Model updated successfully"}
-    except Exception as e:
-        print(f"Lỗi khi cập nhật mô hình: {str(e)}")
+        print(f"\n❌ Error in background initialization: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Lỗi khi cập nhật mô hình: {str(e)}")
+        print("\n⚠️  Server started but model initialization failed!")
+        print("   You can still use the API with fallback recommendations.\n")
+    finally:
+        model_loading = False
 
-@app.post("/interaction/log")
-async def log_interaction(interaction: dict):
-    try:
-        db.user_interactions.insert_one(interaction)
-        return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to log interaction: {str(e)}")
 
-@app.get("/debug/data")
-async def debug_data():
-    try:
-        if db is None:
-            return {"error": "Database connection failed"}
-        
-        # Đếm số lượng documents trong các collections
-        orders_count = db.orders.count_documents({})
-        ratings_count = db.ratings.count_documents({})
-        products_count = db.products.count_documents({})
-        users_count = db.users.count_documents({})
-        
-        # Lấy một vài documents mẫu
-        sample_order = db.orders.find_one({})
-        sample_rating = db.ratings.find_one({})
-        
-        return {
-            "database_info": {
-                "orders_count": orders_count,
-                "ratings_count": ratings_count,
-                "products_count": products_count,
-                "users_count": users_count
-            },
-            "sample_order": sample_order,
-            "sample_rating": sample_rating
-        }
-    except Exception as e:
-        return {"error": str(e)}
+@app.on_event("startup")
+async def startup_event():
+    """Application startup event"""
+    print(f"\n{'='*60}")
+    print(f"{APP_TITLE} v{APP_VERSION}")
+    print(f"{'='*60}\n")
+    
+    # Start model initialization in background thread
+    thread = threading.Thread(target=initialize_model_background, daemon=True)
+    thread.start()
+    
+    print("✓ Application started successfully")
+    print("✓ Model loading in background...\n")
 
-@app.get("/debug/connection")
-async def debug_connection():
-    try:
-        if db is None:
-            return {"error": "Database connection failed"}
-        
-        # Test ping
-        ping_result = db.command("ping")
-        
-        # Lấy danh sách collections
-        collections = db.list_collection_names()
-        
-        return {
-            "ping_result": ping_result,
-            "collections": collections,
-            "database_name": db.name
-        }
-    except Exception as e:
-        return {"error": str(e)}
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Application shutdown event"""
+    print("\n" + "="*60)
+    print("Shutting down application...")
+    print("="*60 + "\n")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    import sys
+    
+    # Add project root to Python path for direct execution
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )

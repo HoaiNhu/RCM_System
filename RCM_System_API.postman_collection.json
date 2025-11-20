@@ -1,0 +1,338 @@
+{
+  "info": {
+    "_postman_id": "rcm-system-api-v2-2024",
+    "name": "RCM System API v2.0 - Hybrid Recommendations",
+    "description": "Complete API endpoints for RCM recommendation system v2.0\n\n**Features:**\n- Hybrid Recommendations (CF + Content-Based)\n- Popular Products\n- Quiz-based Recommendations\n- Model Management & Evaluation\n- Health Checks & Debug Tools\n\n**Quick Start:**\n1. Start server: `python run.py`\n2. Check health: GET /health\n3. Get recommendations: POST /recommend\n4. View API docs: http://localhost:8000/docs",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1️⃣ Health & Status",
+      "item": [
+        {
+          "name": "✅ Root - API Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/",
+              "host": ["{{base_url}}"],
+              "path": [""]
+            },
+            "description": "**Test này trước tiên!**\n\nKiểm tra API có đang chạy không.\n\n**Expected Response:**\n```json\n{\n  \"message\": \"RCM System API v2.0\",\n  \"status\": \"running\"\n}\n```"
+          },
+          "response": []
+        },
+        {
+          "name": "🏥 Health Check (Full)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "**Kiểm tra đầy đủ:**\n- MongoDB connection\n- Redis connection (optional)\n- Model status\n- System info\n\n**Expected Response:**\n```json\n{\n  \"status\": \"healthy\",\n  \"mongodb\": \"connected\",\n  \"redis\": \"connected\" or \"not configured\",\n  \"model\": {\n    \"ready\": true,\n    \"last_update\": \"...\"\n  }\n}\n```"
+          },
+          "response": []
+        },
+        {
+          "name": "📊 Model Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["status"]
+            },
+            "description": "**Chi tiết về model:**\n- CF model status\n- Content-Based model status\n- Training metrics\n- Last update time"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2️⃣ Recommendations (Main Feature)",
+      "item": [
+        {
+          "name": "🎯 Hybrid Recommendations - For User Only",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id_1}}\",\n  \"n_items\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/recommend",
+              "host": ["{{base_url}}"],
+              "path": ["recommend"]
+            },
+            "description": "**Personalized recommendations for user**\n\nSử dụng Hybrid approach:\n- Collaborative Filtering (NMF)\n- Content-Based Filtering (TF-IDF)\n\n**Request:**\n```json\n{\n  \"user_id\": \"<user_id>\",\n  \"n_items\": 5  // optional, default 5\n}\n```\n\n**Response:**\n```json\n{\n  \"recommendations\": [\"product_id_1\", \"product_id_2\", ...],\n  \"source\": \"hybrid (CF + Content-Based)\",\n  \"user_id\": \"...\"\n}\n```"
+          },
+          "response": []
+        },
+        {
+          "name": "🎯 Hybrid Recommendations - With Product Context",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id_1}}\",\n  \"product_id\": \"{{product_id_1}}\",\n  \"n_items\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/recommend",
+              "host": ["{{base_url}}"],
+              "path": ["recommend"]
+            },
+            "description": "**Context-aware recommendations**\n\nKhi user đang xem product cụ thể, recommend similar products (loại trừ product hiện tại).\n\n**Use case:**\n- User đang xem product detail page\n- Hiển thị \"You may also like\" section\n\n**Request:**\n```json\n{\n  \"user_id\": \"<user_id>\",\n  \"product_id\": \"<current_product_id>\",\n  \"n_items\": 5\n}\n```"
+          },
+          "response": []
+        },
+        {
+          "name": "🔥 Popular Products - All Categories",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"n_items\": 10\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/recommend/popular",
+              "host": ["{{base_url}}"],
+              "path": ["recommend", "popular"]
+            },
+            "description": "**Top trending products**\n\nBased on:\n- Number of ratings\n- Average rating score (≥ 4.0)\n- Recent popularity\n\n**Use case:**\n- Homepage \"Trending Now\"\n- New user without history\n\n**Request:**\n```json\n{\n  \"n_items\": 10  // optional, default 5\n}\n```"
+          },
+          "response": []
+        },
+        {
+          "name": "🔥 Popular Products - By Category",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"{{category_id_1}}\",\n  \"n_items\": 10\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/recommend/popular",
+              "host": ["{{base_url}}"],
+              "path": ["recommend", "popular"]
+            },
+            "description": "**Popular products in specific category**\n\n**Use case:**\n- Category page \"Best Sellers\"\n- Filter popular by category\n\n**Request:**\n```json\n{\n  \"category\": \"<category_id>\",\n  \"n_items\": 10\n}\n```"
+          },
+          "response": []
+        },
+        {
+          "name": "📝 Quiz-based Recommendations",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id_1}}\",\n  \"session_id\": \"quiz-session-{{$timestamp}}\",\n  \"n_items\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/recommend/quiz",
+              "host": ["{{base_url}}"],
+              "path": ["recommend", "quiz"]
+            },
+            "description": "**Recommendations based on quiz answers**\n\n**Use case:**\n- Onboarding quiz for new users\n- Preference survey\n- \"Find your perfect product\" feature\n\n**Request:**\n```json\n{\n  \"user_id\": \"<user_id>\",\n  \"session_id\": \"<quiz_session_id>\",\n  \"n_items\": 5\n}\n```\n\n**Note:** Quiz answers phải được lưu trước với session_id tương ứng."
+          },
+          "response": []
+        },
+        {
+          "name": "🧪 Test - Recommendations for Different Users",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id_2}}\",\n  \"n_items\": 8\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/recommend",
+              "host": ["{{base_url}}"],
+              "path": ["recommend"]
+            },
+            "description": "Test với user_id khác để so sánh recommendations.\n\nThử đổi `user_id_2` thành `user_id_3` để xem sự khác biệt."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3️⃣ Model Management",
+      "item": [
+        {
+          "name": "📊 Evaluate Model Performance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/model/evaluate",
+              "host": ["{{base_url}}"],
+              "path": ["model", "evaluate"]
+            },
+            "description": "**Đánh giá hiệu suất model**\n\nMetrics:\n- **Precision@K**: Độ chính xác của top-K recommendations\n- **Recall@K**: Tỷ lệ relevant items được recommend\n- **F1 Score**: Harmonic mean của precision & recall\n- **Coverage**: Tỷ lệ products được recommend\n\n**Response:**\n```json\n{\n  \"precision@5\": 0.82,\n  \"recall@5\": 0.65,\n  \"f1@5\": 0.72,\n  \"coverage\": 0.85,\n  \"evaluated_at\": \"2024-11-20T...\"\n}\n```"
+          },
+          "response": []
+        },
+        {
+          "name": "🔄 Update Model (Incremental)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/model/update",
+              "host": ["{{base_url}}"],
+              "path": ["model", "update"]
+            },
+            "description": "**Cập nhật model với data mới**\n\n- Load model hiện tại\n- Train với data mới\n- Giữ lại knowledge cũ\n\n**Use case:**\n- Daily/weekly model updates\n- Khi có nhiều interactions mới\n\n**Warning:** ⚠️ Operation này có thể mất vài phút!"
+          },
+          "response": []
+        },
+        {
+          "name": "🔨 Train Model (Full Retrain)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/model/train",
+              "host": ["{{base_url}}"],
+              "path": ["model", "train"]
+            },
+            "description": "**Train model từ đầu**\n\n- Xóa model cũ\n- Train lại hoàn toàn\n- Build lại features\n\n**Use case:**\n- Thay đổi hyperparameters\n- Data structure changes\n- Major updates\n\n**Warning:** ⚠️ Operation này có thể mất 5-10 phút!\n\n**Monitoring:** Xem progress trong terminal log."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4️⃣ Debug & Development",
+      "item": [
+        {
+          "name": "🔌 Debug - Connection Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/debug/connection",
+              "host": ["{{base_url}}"],
+              "path": ["debug", "connection"]
+            },
+            "description": "**Kiểm tra database connections**\n\n**Response:**\n```json\n{\n  \"mongodb\": {\n    \"status\": \"connected\",\n    \"database\": \"test\",\n    \"collections\": [\"products\", \"orders\", \"ratings\", ...]\n  },\n  \"redis\": {\n    \"status\": \"connected\" or \"not configured\"\n  }\n}\n```\n\n**Use case:**\n- Troubleshooting connection issues\n- Verify database structure"
+          },
+          "response": []
+        },
+        {
+          "name": "📈 Debug - Data Statistics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/debug/data",
+              "host": ["{{base_url}}"],
+              "path": ["debug", "data"]
+            },
+            "description": "**Thống kê data trong database**\n\n**Response:**\n```json\n{\n  \"orders\": 150,\n  \"ratings\": 450,\n  \"products\": 37,\n  \"users\": 25,\n  \"categories\": 5,\n  \"interactions\": 1200\n}\n```\n\n**Use case:**\n- Data verification\n- Monitor data growth\n- Check if enough data for training"
+          },
+          "response": []
+        },
+        {
+          "name": "📝 Log User Interaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id_1}}\",\n  \"product_id\": \"{{product_id_1}}\",\n  \"action\": \"view\",\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/debug/interaction/log",
+              "host": ["{{base_url}}"],
+              "path": ["debug", "interaction", "log"]
+            },
+            "description": "**Log user interactions**\n\n**Actions:**\n- `view`: User xem product\n- `click`: User click vào product\n- `add_to_cart`: Thêm vào giỏ\n- `purchase`: Mua product\n\n**Request:**\n```json\n{\n  \"user_id\": \"<user_id>\",\n  \"product_id\": \"<product_id>\",\n  \"action\": \"view\",\n  \"timestamp\": \"2024-11-20T10:30:00Z\"\n}\n```\n\n**Use case:**\n- Track user behavior\n- Collect data for model training\n- Analytics"
+          },
+          "response": []
+        },
+        {
+          "name": "🧪 Test - Get Product by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/debug/product/{{product_id_1}}",
+              "host": ["{{base_url}}"],
+              "path": ["debug", "product", "{{product_id_1}}"]
+            },
+            "description": "**Xem chi tiết product**\n\nVerify product data structure."
+          },
+          "response": []
+        },
+        {
+          "name": "🧪 Test - Get User by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/debug/user/{{user_id_1}}",
+              "host": ["{{base_url}}"],
+              "path": ["debug", "user", "{{user_id_1}}"]
+            },
+            "description": "**Xem chi tiết user**\n\nVerify user data và interaction history."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    }
+  ]
+}

@@ -49,7 +49,7 @@ def prepare_data(db, last_timestamp=None):
         n_products = len(all_products)
         interactions = np.zeros((n_users, n_products))
         
-        # Thêm interactions từ orders với quality weighting
+        # Thêm interactions từ orders
         print("Đang xử lý orders...")
         for order in db.orders.find(query):
             if not order.get('userId'):
@@ -59,19 +59,15 @@ def prepare_data(db, last_timestamp=None):
                 continue
             user_idx = user_to_idx[user_id]
             
-            # Quality weight: Real data gets higher weight than synthetic
-            is_synthetic = order.get('synthetic', False)
-            quality_weight = 0.5 if is_synthetic else 1.0  # Synthetic data có weight thấp hơn 50%
-            
             for item in order.get('orderItems', []):
                 product_id = str(item['product'])
                 if product_id not in product_to_idx:
                     continue
                 product_idx = product_to_idx[product_id]
                 quantity = item.get('quantity', 1)
-                interactions[user_idx, product_idx] += quantity * 2.0 * quality_weight  # Apply quality weight
+                interactions[user_idx, product_idx] += quantity * 2.0  # Weight cho purchase
         
-        # Thêm interactions từ ratings với quality weighting
+        # Thêm interactions từ ratings
         print("Đang xử lý ratings...")
         for rating in db.ratings.find(query):
             if not rating.get('userId') or not rating.get('productId'):
@@ -85,16 +81,12 @@ def prepare_data(db, last_timestamp=None):
             user_idx = user_to_idx[user_id]
             product_idx = product_to_idx[product_id]
             
-            # Quality weight for synthetic ratings
-            is_synthetic = rating.get('synthetic', False)
-            quality_weight = 0.6 if is_synthetic else 1.0  # Synthetic ratings có weight thấp hơn 40%
-            
             rating_value = rating.get('rating', 0)
             comment = rating.get('comment', '')
             comment_score = analyze_comment(comment)
             
-            # Kết hợp rating và comment score với quality weight
-            weight = (rating_value * 0.6 + comment_score * 0.4) * quality_weight
+            # Kết hợp rating và comment score
+            weight = rating_value * 0.6 + comment_score * 0.4
             interactions[user_idx, product_idx] += max(weight, 0)
         
         # Normalize interactions (tránh giá trị quá lớn)
@@ -258,12 +250,10 @@ def recommend(user_id, current_product_id, db, model, mappings, redis_client, n_
         # Calculate scores: user_features @ product_features.T
         scores = user_features @ product_features
         
-        # Lấy top products với diversity consideration
+        # Lấy top products
         top_indices = np.argsort(-scores)
         
         recommendations = []
-        seen_categories = {}  # Track category diversity
-        
         for idx in top_indices:
             if len(recommendations) >= n_items:
                 break
@@ -278,20 +268,9 @@ def recommend(user_id, current_product_id, db, model, mappings, redis_client, n_
                 product = db.products.find_one({'_id': ObjectId(product_id)})
                 if product:
                     avg_rating = product.get('averageRating', 0)
-                    category = product.get('productCategory', 'unknown')
-                    
                     # Filter low quality products
-                    if avg_rating < 2.0:
-                        continue
-                    
-                    # Diversity penalty: limit products from same category
-                    category_count = seen_categories.get(category, 0)
-                    if category_count >= 2 and len(recommendations) < n_items - 1:
-                        # Skip if already have 2+ from this category (unless filling last spots)
-                        continue
-                    
-                    recommendations.append(product_id)
-                    seen_categories[category] = category_count + 1
+                    if avg_rating >= 2.0:
+                        recommendations.append(product_id)
             except:
                 continue
         
