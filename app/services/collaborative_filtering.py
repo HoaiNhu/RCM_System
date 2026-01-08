@@ -178,6 +178,37 @@ class CollaborativeFilteringStrategy(IRecommendationStrategy, IModelTrainer):
                         # Add search weight (0.5 per search)
                         interactions[user_idx, product_idx] += 0.5
             
+            # Integrate popularity signals (viewCount and clickCount)
+            print("Integrating popularity signals (viewCount, clickCount)...")
+            for product_id in all_products:
+                if product_id not in self.product_to_idx:
+                    continue
+                
+                product = self.product_repo.find_by_id(product_id)
+                if not product:
+                    continue
+                
+                product_idx = self.product_to_idx[product_id]
+                view_count = product.get('viewCount', 0)
+                click_count = product.get('clickCount', 0)
+                
+                # Calculate popularity boost
+                # clickCount is more valuable than viewCount (CTR signal)
+                # Use log scale to prevent domination by viral products
+                if view_count > 0 or click_count > 0:
+                    # CTR (Click-Through Rate) signal
+                    ctr = (click_count / max(view_count, 1)) if view_count > 0 else 0
+                    
+                    # Popularity score: combines absolute engagement + CTR quality
+                    # log(1 + views) to dampen effect, CTR for quality
+                    popularity_score = np.log1p(view_count) * 0.1 + ctr * 2.0
+                    
+                    # Apply to all users who don't have interaction yet
+                    # This helps with cold-start and discovery
+                    for user_idx in range(n_users):
+                        if interactions[user_idx, product_idx] == 0:
+                            interactions[user_idx, product_idx] += popularity_score
+            
             # Normalize to 0-5 scale
             max_val = interactions.max()
             if max_val > 0:
@@ -227,7 +258,13 @@ class CollaborativeFilteringStrategy(IRecommendationStrategy, IModelTrainer):
                 return False
             
             # Train NMF
-            n_components = min(self.settings.N_COMPONENTS, min(interactions.shape) - 1)
+            # Adaptive n_components based on data size
+            n_users, n_products = interactions.shape
+            if n_users < 50:  # Small dataset
+                n_components = min(8, min(n_users, n_products) - 1)
+            else:
+                n_components = min(self.settings.N_COMPONENTS, min(interactions.shape) - 1)
+                
             print(f"[3/4] 🤖 Training NMF model...")
             print(f"      Components: {n_components}, Max iterations: {self.settings.MAX_ITER}")
             
@@ -343,15 +380,23 @@ class CollaborativeFilteringStrategy(IRecommendationStrategy, IModelTrainer):
             user_vec = self.user_features[user_idx]
             scores = user_vec @ self.product_features
             
+            # Normalize scores to 0-1 range for threshold comparison
+            max_score = scores.max() if scores.max() > 0 else 1.0
+            normalized_scores = scores / max_score
+            
             # Get top products
             top_indices = np.argsort(-scores)
             
-            # Filter and collect recommendations
+            # Filter and collect recommendations with stricter criteria
             recommendations = []
             current_product_id = context.get('current_product_id') if context else None
             
+            # Track categories for diversity
+            category_count = {}
+            max_per_category = max(2, n_items // 2)
+            
             for idx in top_indices:
-                if len(recommendations) >= n_items:
+                if len(recommendations) >= n_items * 3:  # Get more candidates
                     break
                 
                 product_id = self.idx_to_product[idx]
@@ -360,12 +405,38 @@ class CollaborativeFilteringStrategy(IRecommendationStrategy, IModelTrainer):
                 if current_product_id and product_id == current_product_id:
                     continue
                 
-                # Verify product exists and has good rating
+                # Apply score threshold
+                if normalized_scores[idx] < self.settings.SCORE_THRESHOLD:
+                    continue
+                
+                # Verify product quality with stricter criteria
                 product = self.product_repo.find_by_id(product_id)
-                if product and product.get('averageRating', 0) >= self.settings.MIN_RATING_THRESHOLD:
-                    recommendations.append(product_id)
+                if not product:
+                    continue
+                
+                avg_rating = product.get('averageRating', 0)
+                total_ratings = product.get('totalRatings', 0)
+                
+                # Must meet rating threshold AND have minimum reviews
+                if (avg_rating >= self.settings.MIN_RATING_THRESHOLD and 
+                    total_ratings >= self.settings.MIN_TOTAL_RATINGS):
+                    
+                    # Apply category diversity
+                    category = str(product.get('productCategory', 'unknown'))
+                    category_count[category] = category_count.get(category, 0) + 1
+                    
+                    if category_count[category] <= max_per_category:
+                        recommendations.append(product_id)
             
-            return recommendations
+            # Re-rank with quality signals if we have extras
+            if len(recommendations) > n_items:
+                base_scores = {pid: float(scores[self.product_to_idx[pid]]) 
+                             for pid in recommendations if pid in self.product_to_idx}
+                recommendations = self._rerank_with_quality_signals(
+                    user_id, recommendations, base_scores, n_items
+                )
+            
+            return recommendations[:n_items]
             
         except Exception as e:
             print(f"Error in CF recommend: {e}")
@@ -395,6 +466,55 @@ class CollaborativeFilteringStrategy(IRecommendationStrategy, IModelTrainer):
         except Exception as e:
             print(f"Error getting CF scores: {e}")
             return {pid: 0.0 for pid in product_ids}
+    
+    def _rerank_with_quality_signals(self, user_id: str, product_ids: List[str], 
+                                    base_scores: Dict[str, float], n_items: int) -> List[str]:
+        """Re-rank with recency, engagement, and quality signals"""
+        try:
+            from datetime import datetime, timedelta
+            scored_items = []
+            
+            for product_id in product_ids:
+                product = self.product_repo.find_by_id(product_id)
+                if not product:
+                    continue
+                
+                base_score = base_scores.get(product_id, 0.0)
+                
+                # Recency boost (products updated recently)
+                recency_boost = 0.0
+                if 'updatedAt' in product:
+                    try:
+                        updated_at = product['updatedAt']
+                        if hasattr(updated_at, 'replace'):
+                            updated_at = updated_at.replace(tzinfo=None)
+                        days_old = (datetime.now() - updated_at).days
+                        if days_old < 30:
+                            recency_boost = (30 - days_old) / 30 * 0.1
+                    except:
+                        pass
+                
+                # Engagement (CTR)
+                engagement_score = 0.0
+                view_count = product.get('viewCount', 0)
+                click_count = product.get('clickCount', 0)
+                if view_count > 0:
+                    ctr = click_count / view_count
+                    engagement_score = min(ctr / 0.3, 1.0) * 0.1
+                
+                # Rating boost
+                avg_rating = product.get('averageRating', 0)
+                rating_boost = max(0, (avg_rating - 3.5) / 5.0) * 0.1
+                
+                final_score = base_score * (1.0 + recency_boost + engagement_score + rating_boost)
+                scored_items.append((product_id, final_score))
+            
+            scored_items.sort(key=lambda x: x[1], reverse=True)
+            return [pid for pid, _ in scored_items[:n_items]]
+            
+        except Exception as e:
+            print(f"Error in re-ranking: {e}")
+            return product_ids[:n_items]
     
     def is_ready(self) -> bool:
         """Check if model is ready"""

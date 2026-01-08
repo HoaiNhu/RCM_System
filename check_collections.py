@@ -20,7 +20,8 @@ def check_collections():
             mongo_uri = f"mongodb+srv://{username}:{password}@{cluster}/?retryWrites=true&w=majority&appName=WebBuyCake"
         
         client = MongoClient(mongo_uri)
-        db = client.get_database()
+        database = os.getenv("MONGODB_DATABASE", "test")
+        db = client[database]
         
         print("\n" + "="*60)
         print("📊 MONGODB COLLECTIONS - DATA CHECK")

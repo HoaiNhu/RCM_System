@@ -78,8 +78,8 @@ def initialize_model_background():
         print("✅"*30)
         print("\n" + "="*60)
         print("🎉 SERVER IS READY TO ACCEPT REQUESTS!")
-        print("📍 API Documentation: http://localhost:8000/docs")
-        print("🔍 Health Check: http://localhost:8000/health")
+        print("📍 API Documentation: http://localhost:8004/docs")
+        print("🔍 Health Check: http://localhost:8004/health")
         print("="*60 + "\n")
         
     except Exception as e:
@@ -126,6 +126,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8004,
         reload=True
     )

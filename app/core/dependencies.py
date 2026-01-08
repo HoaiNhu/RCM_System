@@ -109,6 +109,8 @@ def get_recommendation_service() -> HybridRecommendationStrategy:
             cf_strategy=cf_strategy,
             content_strategy=content_strategy,
             product_repo=product_repo,
+            order_repo=order_repo,
+            rating_repo=rating_repo,
             settings=settings,
             cf_weight=0.3,  # Reduced - synthetic data quality issue
             content_weight=0.7  # Increased - more reliable
